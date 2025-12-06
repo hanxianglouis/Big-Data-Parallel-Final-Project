@@ -15,9 +15,6 @@ def preprocessing(raw_train_path: str, raw_val_path: str,export_train_path: str,
 
     feature_cols = [f"f{i}" for i in range(12)]
 
-    df_train[feature_cols] = df_train[feature_cols].apply(np.log1p)
-    df_val[feature_cols]   = df_val[feature_cols].apply(np.log1p)
-
     train_mean = df_train[feature_cols].mean()
     train_std  = df_train[feature_cols].std()
 

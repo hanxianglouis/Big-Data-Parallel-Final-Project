@@ -64,12 +64,12 @@ class EcomDFCL(nn.Module) :
             3rd column: untreated cost;
             4th column: untreated revenue.
         """
-        user_freature = self.user_tower(features)
+        user_feature = self.user_tower(features)
 
-        treated_cost = self.task_tower_treatment_True_cost(user_freature)
-        treated_revenue = self.task_tower_treatment_True_revenue(user_freature)
-        untreated_cost = self.task_tower_treatment_False_cost(user_freature)
-        untreated_revenue = self.task_tower_treatment_False_revenue(user_freature)
+        treated_cost = self.task_tower_treatment_True_cost(user_feature)
+        treated_revenue = self.task_tower_treatment_True_revenue(user_feature)
+        untreated_cost = self.task_tower_treatment_False_cost(user_feature)
+        untreated_revenue = self.task_tower_treatment_False_revenue(user_feature)
 
         output = torch.cat([
             treated_cost,

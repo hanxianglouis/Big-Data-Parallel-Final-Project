@@ -8,13 +8,17 @@ import time
 import tqdm
 import os
 from datetime import datetime
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
+from typing import Union
 
 from preprocessing import preprocessing
 from dataset import CriteoDataset
 from model import EcomDFCL
 from loss_functions import local_prediction_loss, decision_policy_learning_loss
 
-def validate(model: EcomDFCL, val_loader: DataLoader, device, alpha=1) :
+def validate(model: Union[EcomDFCL, DDP], val_loader: DataLoader, device, alpha=1) :
     model.eval()
     val_losses = []
     for features, treatment, cost, revenue in val_loader :
@@ -28,29 +32,24 @@ def validate(model: EcomDFCL, val_loader: DataLoader, device, alpha=1) :
 
     return np.sum(val_losses)/len(val_loader)
 
-def train(model: EcomDFCL, train_loader: DataLoader,val_loader: DataLoader, alpha=1, epochs=10, lr=0.001, patience=10, device='cuda') :
-
+def train(model: Union[EcomDFCL, DDP], train_loader: DataLoader,val_loader: DataLoader, train_sampler: DistributedSampler, alpha=1, epochs=10, lr=0.001, patience=10, device='cuda') :
     optimizer = optim.Adam(model.parameters(), lr=lr)
     best_val_loss = 100000000
     no_imporovement = 0
     os.makedirs("model", exist_ok=True)
+    rank = dist.get_rank()
 
     for epoch in range(epochs) :
+        train_sampler.set_epoch(epoch)
         model.train()
         train_losses = []
         t0 = time.time()
         for features, treatment, cost, revenue in tqdm.tqdm(train_loader,desc=f"Epoch {epoch+1}/{epochs}") :
-            # preprocessing
-            features = torch.log1p(features)
-            mean = features.mean(dim=0, keepdim=True)
-            std  = features.std(dim=0, keepdim=True)   
-            features = (features - mean) / (std + 1e-6)
 
             features, treatment, cost, revenue = features.to(device), treatment.to(device), cost.to(device), revenue.to(device)
             output = model(features)
             L_pred = local_prediction_loss(output,treatment,cost,revenue)
             L_decision = decision_policy_learning_loss(output,treatment,cost,revenue,device)
-
             loss = alpha * L_pred - L_decision
 
             loss.backward()
@@ -61,34 +60,53 @@ def train(model: EcomDFCL, train_loader: DataLoader,val_loader: DataLoader, alph
 
         train_loss = np.sum(train_losses)/len(train_loader)
         val_loss = validate(model,val_loader,device,alpha)
-        print(f"[Epoch {epoch+1}] train loss: {train_loss:.4f}, validate loss: {val_loss:.4f}, time consuming: {time.time()-t0}s")
+        if rank == 0:
+            print(f"[Epoch {epoch+1}] train loss: {train_loss:.4f}, validate loss: {val_loss:.4f}, time consuming: {time.time()-t0}s")
 
         if best_val_loss > val_loss :
             no_imporovement = 0
             best_val_loss = val_loss
-            torch.save(model.state_dict(), f"model/best_model.pth")
+            if rank == 0:
+                try :
+                    torch.save(model.module.state_dict(), f"model/best_model.pth")
+                except:
+                    pass
         else :
             no_imporovement +=1
             print(f"No imporvement for {no_imporovement} epoch(s)")
 
         if no_imporovement >= patience :
-            print(f"Exceed the patience: {patience} epochs, early stop!")
+            if rank == 0:
+                print(f"Exceed the patience: {patience} epochs, early stop!")
             break
-
-    best_model = EcomDFCL()
-    best_model.load_state_dict(torch.load("model/best_model.pth"))
-    best_model.to(device)  
-    best_model.eval() 
-
-    return best_model
+    
+    try :
+        best_model = EcomDFCL()
+        best_model.load_state_dict(torch.load("model/best_model.pth"))
+        best_model.to(device)  
+        best_model.eval() 
+        return best_model
+    except :
+        return model
 
 def main() :
     if torch.cuda.is_available() :
         device = 'cuda'
+        backend = "nccl"
     elif torch.backends.mps.is_available() :
         device = 'mps'
+        backend = "gloo"
     else :
         device = 'cpu'
+        backend = "gloo"
+
+    
+    dist.init_process_group(backend)
+    print(
+        f"[Process Info] PID={os.getpid()}, "
+        f"RANK={dist.get_rank()}, "
+        f"LOCAL_RANK={os.environ.get('LOCAL_RANK')}"
+    )
 
     os.makedirs("data", exist_ok=True)
 
@@ -97,21 +115,41 @@ def main() :
     export_train_path = "data/criteo_train.parquet"
     export_val_path = "data/criteo_val.parquet"
 
-    preprocessing(raw_train_path,raw_val_path,export_train_path,export_val_path)
-    
+    rank = dist.get_rank()
+
+    if rank == 0:
+        preprocessing(raw_train_path,raw_val_path,export_train_path,export_val_path)
+        
+    dist.barrier()   # wait for rank 0 to finish preprocessing
+
     batch_size = 1024
 
-    train_set = CriteoDataset("data/criteo_val.parquet")
+    train_set = CriteoDataset("data/criteo_train.parquet")
     val_set = CriteoDataset("data/criteo_val.parquet")
 
-    train_loader = DataLoader(train_set,batch_size=batch_size,shuffle=True,num_workers=4)
-    val_loader = DataLoader(val_set,batch_size=batch_size,shuffle=False,num_workers=4)
+    train_sampler = DistributedSampler(train_set,shuffle=True,drop_last=False)
+    train_loader = DataLoader(train_set,
+                            batch_size=batch_size,
+                            sampler=train_sampler,
+                            num_workers=4)
+    
+    val_sampler = DistributedSampler(val_set,shuffle=False,drop_last=False)
+    val_loader = DataLoader(val_set,
+                            batch_size=batch_size,
+                            sampler=val_sampler,
+                            num_workers=4)
 
     model = EcomDFCL()
-    print(summary(model, (12,), batch_size=batch_size, device='cpu')) # torchsummary does not support mps, to avoid error, we use cpu temporarily
+
+    local_rank = int(os.environ["LOCAL_RANK"])
+    device = f"cuda:{local_rank}"
+    torch.cuda.set_device(local_rank)
+
+    model = EcomDFCL().to(device)
+    model = DDP(model, device_ids=[local_rank], output_device=local_rank)
     model = model.to(device)
     
-    best_model = train(model,train_loader,val_loader,epochs=1, patience=10,device=device)
+    best_model = train(model,train_loader,val_loader,train_sampler, epochs=1, patience=10,device=device)
 
     final_train_loss = validate(best_model,train_loader, device=device)
     final_val_loss = validate(best_model,val_loader, device=device)
