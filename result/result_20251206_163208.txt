@@ -1,0 +1,2 @@
+Train Loss: 18.6918
+Validate Loss: 18.6911

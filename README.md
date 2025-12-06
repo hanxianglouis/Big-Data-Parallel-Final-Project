@@ -1,0 +1,9 @@
+# Claim
+This repository does not aim for any paper publication. This is just used to share our final project of a course. All the models and algorithms are not designed by us, while all of the code are written by ourselves. Everyone is welcomed to use these code.
+# Big Data Parallel Computing Final Project (2025 Fall Renmin Univ. of China)
+## About
+In this project, we use a simplified Decision Focused Causal Learning(DFCL) model to do some causal inferences based on the dataset [CRITEO-UPLIFT v2](https://huggingface.co/datasets/criteo/criteo-uplift). Because the original implementation of this model are written based on Tensorflow, which is difficult to achieve parallel computing, we rewrite the code based on Torch. Unfortunately, limited by our own capabilities, we abandoned some modules in the DFCL model such as the Hashing layer and Embedding layer. We have not achieved parallel computing in this model so far, it is just a normal torch model.
+## How to Run
+If you want to run the code, you are supposed to download the raw dataset, and divide it into two parts `criteo_train.csv` and `criteo_val.csv`. And you should modify the path of these two files, which are at row 95 and 96 in `run.py`. We highly recommend you to put all your dataset in a folder named "data", although it will be created automatically the first time you run the code.
+
+The code can be run at Windows, MacOS and Linux. And if your device is equipped with CUDA environment or MPS (Apple Silicon), the code will use GPU automatically to accelerate. The total number of paramaters is 213,892, therefore using GPU is suggested.
