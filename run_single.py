@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torchsummary import summary
 from torch import optim
 import numpy as np
 import time
@@ -45,8 +44,7 @@ def train(model: EcomDFCL, train_loader: DataLoader,val_loader: DataLoader, alph
             output = model(features)
             L_pred = local_prediction_loss(output,treatment,cost,revenue)
             L_decision = decision_policy_learning_loss(output,treatment,cost,revenue,device)
-            
-            print(L_pred.item(),L_decision.item())
+
             loss = alpha * L_pred - L_decision
 
             loss.backward()
@@ -62,7 +60,6 @@ def train(model: EcomDFCL, train_loader: DataLoader,val_loader: DataLoader, alph
         if best_val_loss > val_loss :
             no_imporovement = 0
             best_val_loss = val_loss
-            torch.save(model.state_dict(), f"model/best_model.pth")
         else :
             no_imporovement +=1
             print(f"No imporvement for {no_imporovement} epoch(s)")
@@ -71,12 +68,7 @@ def train(model: EcomDFCL, train_loader: DataLoader,val_loader: DataLoader, alph
             print(f"Exceed the patience: {patience} epochs, early stop!")
             break
 
-    best_model = EcomDFCL()
-    best_model.load_state_dict(torch.load("model/best_model.pth"))
-    best_model.to(device)  
-    best_model.eval() 
-
-    return best_model
+    return model
 
 def main() :
     if torch.cuda.is_available() :
@@ -85,7 +77,7 @@ def main() :
         device = 'mps'
     else :
         device = 'cpu'
-
+    print(f"Using device: {device}")
     os.makedirs("data", exist_ok=True)
 
     raw_train_path = "data/criteo_train.csv"
@@ -95,7 +87,7 @@ def main() :
 
     preprocessing(raw_train_path,raw_val_path,export_train_path,export_val_path)
     
-    batch_size = 1024
+    batch_size = 256
 
     train_set = CriteoDataset("data/criteo_train.parquet")
     val_set = CriteoDataset("data/criteo_val.parquet")
@@ -104,7 +96,6 @@ def main() :
     val_loader = DataLoader(val_set,batch_size=batch_size,shuffle=False,num_workers=4)
 
     model = EcomDFCL()
-    print(summary(model, (12,), batch_size=batch_size, device='cpu')) # torchsummary does not support mps, to avoid error, we use cpu temporarily
     model = model.to(device)
     
     best_model = train(model,train_loader,val_loader,epochs=1, patience=10,device=device)

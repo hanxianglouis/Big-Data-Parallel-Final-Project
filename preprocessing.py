@@ -10,8 +10,8 @@ def preprocessing(raw_train_path: str, raw_val_path: str,export_train_path: str,
         print("Proceeded data exists. Skip preprocessing!")
         return
     print("Reading raw data...")
-    df_train = pd.read_csv(raw_train_path)
-    df_val = pd.read_csv(raw_val_path)
+    df_train = pd.read_csv(raw_train_path)[:60000]
+    df_val = pd.read_csv(raw_val_path)[:7000]
 
     feature_cols = [f"f{i}" for i in range(12)]
 

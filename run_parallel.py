@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torchsummary import summary
 from torch import optim
 import numpy as np
 import time
@@ -66,11 +65,6 @@ def train(model: Union[EcomDFCL, DDP], train_loader: DataLoader,val_loader: Data
         if best_val_loss > val_loss :
             no_imporovement = 0
             best_val_loss = val_loss
-            if rank == 0:
-                try :
-                    torch.save(model.module.state_dict(), f"model/best_model.pth")
-                except:
-                    pass
         else :
             no_imporovement +=1
             print(f"No imporvement for {no_imporovement} epoch(s)")
@@ -79,23 +73,13 @@ def train(model: Union[EcomDFCL, DDP], train_loader: DataLoader,val_loader: Data
             if rank == 0:
                 print(f"Exceed the patience: {patience} epochs, early stop!")
             break
-    
-    try :
-        best_model = EcomDFCL()
-        best_model.load_state_dict(torch.load("model/best_model.pth"))
-        best_model.to(device)  
-        best_model.eval() 
-        return best_model
-    except :
-        return model
+        
+    return model
 
 def main() :
     if torch.cuda.is_available() :
         device = 'cuda'
         backend = "nccl"
-    elif torch.backends.mps.is_available() :
-        device = 'mps'
-        backend = "gloo"
     else :
         device = 'cpu'
         backend = "gloo"
@@ -118,11 +102,12 @@ def main() :
     rank = dist.get_rank()
 
     if rank == 0:
+        print(f"Using device: {device}")
         preprocessing(raw_train_path,raw_val_path,export_train_path,export_val_path)
         
     dist.barrier()   # wait for rank 0 to finish preprocessing
 
-    batch_size = 1024
+    batch_size = 256
 
     train_set = CriteoDataset("data/criteo_train.parquet")
     val_set = CriteoDataset("data/criteo_val.parquet")
